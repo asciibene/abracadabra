@@ -220,8 +220,11 @@ header { display: flex; flex-direction: column; gap: 6px; }
     <p class="tag"><span class="dot"></span><span id="tagText">Pour moi</span></p>
     <p class="geste" id="geste">Bois un grand verre d’eau, lentement, en pensant à rien d’autre.</p>
     <div class="meta">
-      <span id="meta">Moins d’une minute</span>
-      <button class="link" id="timer" type="button" hidden>Lancer</button>
+        <span id="meta">Moins d’une minute</span>
+        <div style="display: flex; gap: 8px; align-items: center;">
+            <button class="link" id="audioToggle" type="button" title="Activer les battements binauraux (casque recommandé)" hidden>🎵 Son</button>
+            <button class="link" id="timer" type="button" hidden>Lancer</button>
+         </div>
     </div>
   </section>
 
@@ -447,12 +450,17 @@ header { display: flex; flex-direction: column; gap: 6px; }
     $("tagText").textContent = CATS[cur.c];
     setGeste(cur.t, animate);
     $("meta").textContent = cur.s ? "Environ " + fmt(cur.s) : "Moins d’une minute";
-    var tb = $("timer");
-    if (cur.s) { tb.hidden = false; tb.disabled = false; tb.textContent = "Lancer " + fmt(cur.s); }
-    else { tb.hidden = true; }
-    doneNow = false;
-    var d = $("done");
-    d.disabled = false; d.textContent = "C’est fait";
+        var tb = $("timer");
+    var ab = $("audioToggle");
+    if (cur.s) { 
+      tb.hidden = false; tb.disabled = false; tb.textContent = "Lancer " + fmt(cur.s); 
+      ab.hidden = false;
+    } else { 
+      tb.hidden = true; 
+      ab.hidden = true;
+      toggleBinaural(false); // Ensure audio stops if switching to a non-timed card
+    }
+    
   }
 
   function next(animate) { cur = pick(); render(animate); }
@@ -516,6 +524,87 @@ header { display: flex; flex-direction: column; gap: 6px; }
       navigator.clipboard.writeText(txt).then(function () { flash("Copié"); }, fallback);
     } catch (e) { fallback(); }
   });
+
+    var audioCtx = null, leftOsc = null, rightOsc = null, merger = null, audioGain = null;
+  var isBinauralActive = false;
+
+  function toggleBinaural(enable) {
+    if (enable && !isBinauralActive) {
+      try {
+        if (!audioCtx) {
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioCtx.state === 'suspended') {
+          audioCtx.resume();
+        }
+
+        // Base carrier frequency (200 Hz) + 6 Hz Theta offset for relaxation
+        var baseFreq = 200;
+        var beatFreq = 6; 
+
+        audioGain = audioCtx.createGain();
+        audioGain.gain.setValueAtTime(0, audioCtx.currentTime);
+        // Soft fade in over 1.5 seconds to avoid audio clicks
+        audioGain.gain.linearRampToValueAtTime(0.12, audioCtx.currentTime + 1.5);
+
+        merger = audioCtx.createChannelMerger(2);
+
+        // Left ear oscillator
+        leftOsc = audioCtx.createOscillator();
+        leftOsc.type = 'sine';
+        leftOsc.frequency.value = baseFreq;
+
+        // Right ear oscillator (slightly offset for the binaural beat)
+        rightOsc = audioCtx.createOscillator();
+        rightOsc.type = 'sine';
+        rightOsc.frequency.value = baseFreq + beatFreq;
+
+        // Route left to channel 0, right to channel 1
+        leftOsc.connect(merger, 0, 0);
+        rightOsc.connect(merger, 0, 1);
+
+        merger.connect(audioGain);
+        audioGain.connect(audioCtx.destination);
+
+        leftOsc.start();
+        rightOsc.start();
+        isBinauralActive = true;
+
+        var btn = $("audioToggle");
+        btn.textContent = "🔊 Son actif";
+        btn.style.borderColor = "var(--gold)";
+      } catch (e) {
+        console.error("Web Audio not supported or blocked", e);
+      }
+    } else if (!enable && isBinauralActive) {
+      if (audioGain && audioCtx) {
+        // Soft fade out over 0.8 seconds
+        audioGain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.8);
+        setTimeout(function() {
+          if (leftOsc) { leftOsc.stop(); leftOsc.disconnect(); leftOsc = null; }
+          if (rightOsc) { rightOsc.stop(); rightOsc.disconnect(); rightOsc = null; }
+          if (merger) { merger.disconnect(); merger = null; }
+          if (audioGain) { audioGain.disconnect(); audioGain = null; }
+          isBinauralActive = false;
+        }, 800);
+      }
+      var btn = $("audioToggle");
+      btn.textContent = "🎵 Son";
+      btn.style.borderColor = "var(--line)";
+    }
+  }
+
+  // Hook up the audio toggle button
+  $("audioToggle").addEventListener("click", function() {
+    toggleBinaural(!isBinauralActive);
+  });
+
+  // Automatically clean up audio and hide button when rendering a new card or stopping timer
+  function stopTimer() { 
+    if (timerId) { clearInterval(timerId); timerId = null; }
+    toggleBinaural(false);
+  }
+  
 
   showCount();
   next(false);
